@@ -7,8 +7,6 @@
 이미 Git이 설치되어 있고 개발 환경에 익숙한 경우, 아래 명령어를 사용하여 간편하게 설치할 수 있습니다.
 
     리포지토리를 클론합니다:
-    Bash
-
     git clone https://github.com/본인아이디/TossTick.git
     cd TossTick
 
