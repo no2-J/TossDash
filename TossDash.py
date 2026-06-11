@@ -140,7 +140,10 @@ class TossWidget(QWidget):
         super().__init__()
         self.cid = cid
         self.csec = csec
-        self.interval = interval
+        
+        # [수정] 무분별하게 짧은 주기(Rate Limit) 방어를 위해 최소 15초 강제 제한
+        self.interval = max(15, interval)
+        self.current_interval = self.interval  # 실시간 유동적 타이머 주기 관리를 위한 변수
         
         self.old_pos = None
         self.is_collapsed = False
@@ -154,7 +157,7 @@ class TossWidget(QWidget):
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh_data)
-        self.timer.start(self.interval * 1000)
+        self.timer.start(self.current_interval * 1000)
         
         self.refresh_data()
 
@@ -310,9 +313,8 @@ class TossWidget(QWidget):
         close_btn.setCursor(QCursor(Qt.PointingHandCursor))
         close_btn.clicked.connect(self.close)
         
-        # ✨ [추가]: 깃허브 링크 레이블 (HTML 형태 링크 연동 및 마우스 포인터 손가락 변경)
         github_lbl = QLabel('<a href="https://github.com/no2-J/TossDash" style="color: #7B84A0; text-decoration: none;">by no2-J</a>')
-        github_lbl.setOpenExternalLinks(True)  # 클릭 시 기본 웹 브라우저로 열기 활성화
+        github_lbl.setOpenExternalLinks(True)  
         github_lbl.setStyleSheet("font-size: 11px; border: none; background: transparent;")
         github_lbl.setCursor(QCursor(Qt.PointingHandCursor))
         
@@ -321,7 +323,7 @@ class TossWidget(QWidget):
 
         footer_layout.addWidget(close_btn)
         footer_layout.addStretch()
-        footer_layout.addWidget(github_lbl) # 깃허브 로고 배치
+        footer_layout.addWidget(github_lbl) 
         footer_layout.addSpacing(4)
         footer_layout.addWidget(self.sizegrip)
         bg_layout.addWidget(self.footer)
@@ -337,6 +339,11 @@ class TossWidget(QWidget):
             self.worker.start()
 
     def update_ui(self, data):
+        # [수정] 통신이 성공하면 에러 상태로 인해 늘어났던 주기(백오프)를 원래 기본 주기로 신속히 복구
+        if self.current_interval != self.interval:
+            self.current_interval = self.interval
+            self.timer.start(self.current_interval * 1000)
+
         self.status_lbl.setText("정상")
         self.total_asset_lbl.setText(format_money(data['total_asset']))
         
@@ -402,7 +409,11 @@ class TossWidget(QWidget):
             self.items_layout.addWidget(row)
 
     def show_error(self, err_msg):
-        self.status_lbl.setText("에러")
+        # [수정] 백오프 로직 적용: 오류 지속 발생 시 트래픽 폭탄 방지를 위해 주기를 2배씩 연장 (최대 300초 = 5분)
+        self.current_interval = min(self.current_interval * 2, 300)
+        self.timer.start(self.current_interval * 1000)
+
+        self.status_lbl.setText(f"에러 (재시도: {self.current_interval}초 뒤)")
         self.total_asset_lbl.setText("연결 실패")
         self.pl_amt_lbl.setText(err_msg)
         self.pl_amt_lbl.setStyleSheet(f"color: {COLOR_PROFIT}; font-size: 11px; border:none;")
@@ -483,14 +494,13 @@ class SetupDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("TossDash 위젯 인증")
-        self.setFixedSize(340, 260)  
+        self.setFixedSize(340, 190)  # [수정] 주기 입력란 제거에 따라 컴팩트하게 UI 높이 조정 (260 -> 190)
         self.setStyleSheet(f"background-color: {BG_COLOR}; color: {TEXT_PRIMARY};")
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 15, 20, 20)
         layout.setSpacing(8)
         
-        # 스타일 시트 공통 적용 (세로 패딩을 늘려 글자 짤림 방지)
         input_style = f"""
             background-color: {HEADER_COLOR}; 
             border: 1px solid {BORDER_COLOR}; 
@@ -508,9 +518,6 @@ class SetupDialog(QDialog):
         self.csec_input.setPlaceholderText("Secret Key 입력")
         self.csec_input.setEchoMode(QLineEdit.Password)
         self.csec_input.setStyleSheet(input_style)
-        
-        self.interval_input = QLineEdit("30")
-        self.interval_input.setStyleSheet(input_style)
 
         save_btn = QPushButton("설정 저장 후 시작")
         save_btn.setStyleSheet("""
@@ -530,7 +537,6 @@ class SetupDialog(QDialog):
         save_btn.setCursor(QCursor(Qt.PointingHandCursor))
         save_btn.clicked.connect(self.accept)
 
-        # 라벨 폰트 설정
         label_style = f"color: {TEXT_MUTED}; font-size: 11px; font-weight: bold;"
         
         lbl_id = QLabel("API Key")
@@ -538,9 +544,6 @@ class SetupDialog(QDialog):
         
         lbl_sec = QLabel("Secret Key")
         lbl_sec.setStyleSheet(label_style)
-        
-        lbl_int = QLabel("새로고침 주기 (초)")
-        lbl_int.setStyleSheet(label_style)
 
         layout.addWidget(lbl_id)
         layout.addWidget(self.cid_input)
@@ -548,18 +551,14 @@ class SetupDialog(QDialog):
         
         layout.addWidget(lbl_sec)
         layout.addWidget(self.csec_input)
-        layout.addSpacing(2)
         
-        layout.addWidget(lbl_int)
-        layout.addWidget(self.interval_input)
-        
+        # [수정] 새로고침 주기 입력부 위젯 및 라벨 원천 삭제 완료
         layout.addSpacing(12)
         layout.addWidget(save_btn)
 
     def get_data(self):
-        try: intv = int(self.interval_input.text())
-        except: intv = 30
-        return self.cid_input.text().strip(), self.csec_input.text().strip(), intv
+        # [수정] 입력칸 삭제에 맞춰 안전하고 표준적인 권장 주기인 30초를 기본값으로 반환
+        return self.cid_input.text().strip(), self.csec_input.text().strip(), 30
 
 # ─── 메인 엔트리 포인트 ───────────────────────────────────────────────────────
 def main():
